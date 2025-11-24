@@ -202,6 +202,9 @@
                     // Display the involved quantum moves
                     const movesText = cell.superposition.map(moveId => {
                         const move = superpositionMoves.find(m => m.id === moveId);
+                        // Check if move exists (might be removed in a future cleanup step, but safer to check)
+                        if (!move) return '';
+                        
                         // Greek translation in display
                         const playerMark = move.player === 'X' ? 'Χ' : 'Ο';
                         return `<span class="${move.player === 'X' ? 'x-player' : 'o-player'}">${playerMark}<sub>${moveId}</sub></span>`;
@@ -248,16 +251,20 @@
         }
 
         /**
-         * Creates the entanglement graph from the quantum moves.
+         * ΔΙΟΡΘΩΘΗΚΕ: Δημιουργεί τον γράφο εμπλοκής μόνο με τις ενεργές κινήσεις υπέρθεσης.
          */
         function createEntanglementGraph() {
             const nodes = 9;
             const adj = Array.from({ length: nodes }, () => []);
             
             for (const move of superpositionMoves) {
-                // Check if the move is still in superposition
-                if (boardState[move.cells[0]].superposition.includes(move.id) || boardState[move.cells[1]].superposition.includes(move.id)) {
-                    const [u, v] = move.cells;
+                const [u, v] = move.cells;
+
+                // Μια κίνηση θεωρείται ΕΝΕΡΓΗ ακμή (εμπλοκή) μόνο αν υπάρχει
+                // στη superposition και των δύο κελιών.
+                const isMoveActive = boardState[u].superposition.includes(move.id) && boardState[v].superposition.includes(move.id);
+
+                if (isMoveActive) {
                     adj[u].push({ neighbor: v, moveId: move.id });
                     adj[v].push({ neighbor: u, moveId: move.id });
                 }
@@ -298,8 +305,6 @@
                                 const moveLink = superpositionMoves.find(m => 
                                     ((m.cells[0] === cell1 && m.cells[1] === cell2) || 
                                     (m.cells[0] === cell2 && m.cells[1] === cell1))
-                                    // Ensure the move is still active in the superposition
-                                    && (boardState[cell1].superposition.includes(m.id) || boardState[cell2].superposition.includes(m.id))
                                 );
                                 if (moveLink && !cycleMoves.includes(moveLink.id)) {
                                     cycleMoves.push(moveLink.id);
@@ -310,7 +315,6 @@
                             const closingMove = superpositionMoves.find(m => 
                                 ((m.cells[0] === u && m.cells[1] === v) || 
                                 (m.cells[0] === v && m.cells[1] === u))
-                                && (boardState[u].superposition.includes(m.id) || boardState[v].superposition.includes(m.id))
                             );
                             if (closingMove && !cycleMoves.includes(closingMove.id)) {
                                 cycleMoves.push(closingMove.id);
@@ -370,9 +374,10 @@
                 const [cellA, cellB] = move.cells;
                 const movePlayerMark = move.player === 'X' ? 'Χ' : 'Ο';
                 
-                // Only allow collapse to non-definite cells
-                if (boardState[cellA].definite === null) {
-                    // Create button for collapse to Cell A
+                // ΔΙΟΡΘΩΘΗΚΕ: Εμφάνισε επιλογή μόνο αν το κελί ΔΕΝ είναι definite ΚΑΙ περιέχει ακόμα την κίνηση.
+                
+                // Επιλογή κατάρρευσης στο Κελί Α
+                if (boardState[cellA].definite === null && boardState[cellA].superposition.includes(move.id)) {
                     const btnA = document.createElement('button');
                     btnA.classList.add('collapse-option');
                     btnA.textContent = `${movePlayerMark}${move.id} → Κελί ${cellA + 1}`;
@@ -380,8 +385,8 @@
                     collapseOptionsElement.appendChild(btnA);
                 }
 
-                if (boardState[cellB].definite === null) {
-                    // Create button for collapse to Cell B
+                // Επιλογή κατάρρευσης στο Κελί Β
+                if (boardState[cellB].definite === null && boardState[cellB].superposition.includes(move.id)) {
                     const btnB = document.createElement('button');
                     btnB.classList.add('collapse-option');
                     btnB.textContent = `${movePlayerMark}${move.id} → Κελί ${cellB + 1}`;
@@ -390,6 +395,13 @@
                 }
             });
             
+            // If there are no collapse options left (shouldn't happen with the fix above, but safe check)
+            if (collapseOptionsElement.children.length === 0) {
+                updateMessage("Σφάλμα: Δεν βρέθηκαν έγκυρες επιλογές κατάρρευσης. Επανεκκινήστε το παιχνίδι.", 'text-red-800', 'bg-red-100');
+                gameActive = false;
+                return;
+            }
+
             // Disable clicks on the board until measurement is done
             boardElement.querySelectorAll('.cell').forEach(cell => cell.removeEventListener('click', handleCellClick));
         }
@@ -423,9 +435,8 @@
             while (collapsedInPropagation) {
                 collapsedInPropagation = false;
                 
-                // Re-check all active superposition moves against the current definite state
+                // Iterate over all superposition moves
                 for (const move of superpositionMoves) {
-                    if (move.id === chosenMoveId) continue; // Already handled
                     
                     const [cell1, cell2] = move.cells;
                     
@@ -476,7 +487,7 @@
             firstCellIndex = null;
             currentPlayer = currentPlayer === 'X' ? 'O' : 'X';
             const nextPlayerMark = currentPlayer === 'X' ? 'Χ' : 'Ο';
-            updateMessage(`Παίκτης ${nextPlayerMark}: Κάντε την 1η επιλογή σας.`, 'text-gray-800', 'bg-gray-200'); // Διορθώθηκε το colorClass
+            updateMessage(`Παίκτης ${nextPlayerMark}: Κάντε την 1η επιλογή σας.`, 'text-gray-800', 'bg-gray-200');
             renderBoard();
         }
 
@@ -539,7 +550,7 @@
                     moveStage = 1;
                     firstCellIndex = null;
                     const nextPlayerMark = currentPlayer === 'X' ? 'Χ' : 'Ο';
-                    updateMessage(`Παίκτης ${nextPlayerMark}: Κάντε την 1η επιλογή σας.`, 'text-gray-800', 'bg-gray-200'); // Διορθώθηκε το colorClass
+                    updateMessage(`Παίκτης ${nextPlayerMark}: Κάντε την 1η επιλογή σας.`, 'text-gray-800', 'bg-gray-200');
                 }
 
                 renderBoard();
@@ -561,7 +572,7 @@
             boardElement.classList.remove('collapse-mode');
             
             const playerMark = currentPlayer === 'X' ? 'Χ' : 'Ο';
-            updateMessage(`Παίκτης ${playerMark}: Κάντε την 1η επιλογή σας.`, 'text-gray-800', 'bg-gray-200'); // Διορθώθηκε το colorClass
+            updateMessage(`Παίκτης ${playerMark}: Κάντε την 1η επιλογή σας.`, 'text-gray-800', 'bg-gray-200');
             renderBoard();
         }
 
