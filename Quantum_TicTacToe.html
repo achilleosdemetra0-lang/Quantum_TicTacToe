@@ -202,7 +202,6 @@
                     // Display the involved quantum moves
                     const movesText = cell.superposition.map(moveId => {
                         const move = superpositionMoves.find(m => m.id === moveId);
-                        // Check if move exists (might be removed in a future cleanup step, but safer to check)
                         if (!move) return '';
                         
                         // Greek translation in display
@@ -251,7 +250,7 @@
         }
 
         /**
-         * ΔΙΟΡΘΩΘΗΚΕ: Δημιουργεί τον γράφο εμπλοκής μόνο με τις ενεργές κινήσεις υπέρθεσης.
+         * Δημιουργεί τον γράφο εμπλοκής μόνο με τις ενεργές κινήσεις υπέρθεσης.
          */
         function createEntanglementGraph() {
             const nodes = 9;
@@ -260,7 +259,7 @@
             for (const move of superpositionMoves) {
                 const [u, v] = move.cells;
 
-                // Μια κίνηση θεωρείται ΕΝΕΡΓΗ ακμή (εμπλοκή) μόνο αν υπάρχει
+                // Μια κίνηση θεωρείται ενεργή ακμή εμπλοκής μόνο αν υπάρχει
                 // στη superposition και των δύο κελιών.
                 const isMoveActive = boardState[u].superposition.includes(move.id) && boardState[v].superposition.includes(move.id);
 
@@ -374,7 +373,7 @@
                 const [cellA, cellB] = move.cells;
                 const movePlayerMark = move.player === 'X' ? 'Χ' : 'Ο';
                 
-                // ΔΙΟΡΘΩΘΗΚΕ: Εμφάνισε επιλογή μόνο αν το κελί ΔΕΝ είναι definite ΚΑΙ περιέχει ακόμα την κίνηση.
+                // Εμφάνισε επιλογή μόνο αν το κελί ΔΕΝ είναι definite ΚΑΙ περιέχει ακόμα την κίνηση.
                 
                 // Επιλογή κατάρρευσης στο Κελί Α
                 if (boardState[cellA].definite === null && boardState[cellA].superposition.includes(move.id)) {
@@ -395,7 +394,7 @@
                 }
             });
             
-            // If there are no collapse options left (shouldn't happen with the fix above, but safe check)
+            // If there are no collapse options left (emergency brake)
             if (collapseOptionsElement.children.length === 0) {
                 updateMessage("Σφάλμα: Δεν βρέθηκαν έγκυρες επιλογές κατάρρευσης. Επανεκκινήστε το παιχνίδι.", 'text-red-800', 'bg-red-100');
                 gameActive = false;
@@ -407,70 +406,73 @@
         }
         
         /**
-         * Resolves the collapse based on the player's choice.
+         * Resolves the collapse based on the player's choice, applying deterministic propagation.
+         * (ΔΙΟΡΘΩΘΗΚΕ: Ισχυρότερος βρόχος για αλυσιδωτή αντίδραση)
          * @param {number} chosenMoveId - ID of the move chosen to collapse.
          * @param {number} chosenCellIndex - The index of the cell where the move collapses.
-         * @param {Array<number>} cycleMoveIds - IDs of the cycle moves.
          */
-        function resolveCollapse(chosenMoveId, chosenCellIndex, cycleMoveIds) {
+        function resolveCollapse(chosenMoveId, chosenCellIndex) {
             collapseOptionsElement.innerHTML = '';
             boardElement.classList.remove('collapse-mode');
 
-            // 1. Collapse the chosen move
+            // 1. Κατάρρευση της επιλεγμένης κίνησης (Measurement)
             const chosenMove = superpositionMoves.find(m => m.id === chosenMoveId);
             const otherCellIndex = chosenMove.cells.find(i => i !== chosenCellIndex);
 
-            // Definite placement of the mark in chosenCellIndex
+            // Θέτουμε το επιλεγμένο κελί ως οριστικό
             boardState[chosenCellIndex].definite = chosenMove.player;
-            boardState[chosenCellIndex].superposition = []; // Clear all superposition in this definite cell
+            boardState[chosenCellIndex].superposition = []; 
             
-            // Remove the move from the other cell's superposition
+            // Αφαιρούμε την κίνηση από το άλλο κελί (Quantum Effect)
             boardState[otherCellIndex].superposition = boardState[otherCellIndex].superposition.filter(id => id !== chosenMoveId);
-            
-            // 2. Deterministic Collapse propagation
-            let definiteCellsAfterFirstCollapse = new Set(boardState.map((c, i) => c.definite !== null ? i : -1).filter(i => i !== -1));
-            
-            // Use a loop to propagate collapses
-            let collapsedInPropagation = true;
-            while (collapsedInPropagation) {
-                collapsedInPropagation = false;
+
+            // 2. Επαναληπτική Διαδοχική Κατάρρευση (Deterministic Propagation)
+            let collapseOccurred = true;
+
+            while (collapseOccurred) {
+                collapseOccurred = false;
                 
-                // Iterate over all superposition moves
-                for (const move of superpositionMoves) {
+                // Επανάληψη σε όλα τα κελιά (κόμβους) του πίνακα
+                for (let i = 0; i < 9; i++) {
                     
-                    const [cell1, cell2] = move.cells;
-                    
-                    // Only consider moves that are still in superposition in at least one cell
-                    const isMoveActive = boardState[cell1].superposition.includes(move.id) || boardState[cell2].superposition.includes(move.id);
-                    if (!isMoveActive) continue;
-
-                    const isCell1Definite = definiteCellsAfterFirstCollapse.has(cell1);
-                    const isCell2Definite = definiteCellsAfterFirstCollapse.has(cell2);
-
-                    let collapseTo = null;
-
-                    if (isCell1Definite && !isCell2Definite && boardState[cell2].definite === null) {
-                        collapseTo = cell2;
-                    } else if (isCell2Definite && !isCell1Definite && boardState[cell1].definite === null) {
-                        collapseTo = cell1;
-                    }
-
-                    if (collapseTo !== null) {
-                        // Propagate collapse
-                        boardState[collapseTo].definite = move.player;
-                        boardState[collapseTo].superposition = []; // Clear all superposition in the new definite cell
-                        definiteCellsAfterFirstCollapse.add(collapseTo);
+                    if (boardState[i].definite !== null) {
+                        // **ΚΑΝΟΝΑΣ 1: Ένα κελί i μόλις έγινε Definite.** // Πρέπει να αφαιρέσουμε όλες τις κινήσεις που συνδέονταν σε αυτό από το άλλο τους άκρο.
                         
-                        // Remove the move from its *other* cell
-                        const otherCellInMove = move.cells.find(i => i !== collapseTo);
-                        boardState[otherCellInMove].superposition = boardState[otherCellInMove].superposition.filter(id => id !== move.id);
+                        // Επειδή αδειάσαμε το boardState[i].superposition, 
+                        // ελέγχουμε όλες τις moves για να δούμε ποιες συνδέονται με το i.
+                        for (const move of superpositionMoves) {
+                            if (move.cells.includes(i)) {
+                                const otherCell = move.cells.find(c => c !== i);
+                                
+                                // Αν η κίνηση αφαιρεθεί από το άλλο κελί, έγινε κατάρρευση.
+                                const initialLength = boardState[otherCell].superposition.length;
+                                boardState[otherCell].superposition = boardState[otherCell].superposition.filter(id => id !== move.id);
+                                
+                                if (boardState[otherCell].superposition.length < initialLength) {
+                                    collapseOccurred = true; 
+                                }
+                            }
+                        }
 
-                        collapsedInPropagation = true; // Continue the loop to check for more collapses
+                    } else if (boardState[i].definite === null) {
+                        // **ΚΑΝΟΝΑΣ 2: Κελί i έχει μία μόνο κβαντική επιλογή.**
+                        if (boardState[i].superposition.length === 1) {
+                            const winningMoveId = boardState[i].superposition[0];
+                            const winningMove = superpositionMoves.find(m => m.id === winningMoveId);
+
+                            if (winningMove) {
+                                boardState[i].definite = winningMove.player;
+                                boardState[i].superposition = []; 
+                                
+                                collapseOccurred = true; // Συνεχίζουμε τον βρόχο για να εφαρμοστεί ο Κανόνας 1
+                            }
+                        }
                     }
                 }
-            }
-            
-            // 3. Final Cleanup: Ensure all definite cells have an empty superposition array
+            } // End of while loop
+
+
+            // 3. Final Cleanup (Safe redundancy)
             for (let i = 0; i < 9; i++) {
                 if (boardState[i].definite !== null) {
                     boardState[i].superposition = [];
@@ -496,14 +498,12 @@
 
         /**
          * Handles cell click.
-         * @param {Event} event - The click event.
          */
         function handleCellClick(event) {
             if (!gameActive || moveStage === 3) return;
 
             const index = parseInt(event.currentTarget.dataset.index);
 
-            // Check if the cell is already definite
             if (boardState[index].definite !== null) {
                 updateMessage("Αυτό το κελί έχει ήδη καταρρεύσει (είναι οριστικό). Επιλέξτε άλλο.", 'text-red-600', 'bg-red-100');
                 return;
