@@ -261,8 +261,6 @@
             for (const move of superpositionMoves) {
                 const [u, v] = move.cells;
 
-                // Μια κίνηση θεωρείται ενεργή ακμή εμπλοκής μόνο αν υπάρχει
-                // στη superposition και των δύο κελιών.
                 const isMoveActive =
                     boardState[u].superposition.includes(move.id) &&
                     boardState[v].superposition.includes(move.id);
@@ -299,22 +297,18 @@
             const visited = new Array(nodes).fill(false);
             const path = []; 
             
-            // DFS utility function
             function dfs(node, parentNode) { 
                 visited[node] = true;
                 path.push(node);
 
                 for (const { neighbor: neigh } of adj[node]) {
-                    // Ignore the edge to the parent node
                     if (neigh === parentNode) continue; 
                     
                     if (visited[neigh]) {
-                        // Cycle found: neigh is already visited and is not the direct parent
                         const startIndex = path.indexOf(neigh);
                         if (startIndex !== -1) {
                             let cycleMoves = [];
                             
-                            // 1. Traverse the path from neigh up to node to find the intermediate move IDs
                             for (let i = startIndex; i < path.length; i++) {
                                 const cell1 = path[i];
                                 const cell2 = (i === path.length - 1) ? node : path[i + 1];
@@ -328,7 +322,6 @@
                                 }
                             }
                             
-                            // 2. Add the move that closed the cycle (node to neigh)
                             const closingMove = superpositionMoves.find(m => 
                                 ((m.cells[0] === node && m.cells[1] === neigh) || 
                                  (m.cells[0] === neigh && m.cells[1] === node))
@@ -340,7 +333,7 @@
                             return cycleMoves;
                         }
                     } else {
-                        const result = dfs(neigh, node); // node is the parent node for neigh
+                        const result = dfs(neigh, node);
                         if (result) return result;
                     }
                 }
@@ -349,15 +342,58 @@
                 return null;
             }
 
-            // Start DFS from all nodes
             for (let i = 0; i < nodes; i++) {
-                if (!visited[i] && boardState[i].definite === null) { // Only check cells that are not definite
-                    const result = dfs(i, -1); // -1: invalid parent index for start node
+                if (!visited[i] && boardState[i].definite === null) {
+                    const result = dfs(i, -1);
                     if (result) return result;
                 }
             }
             
             return null;
+        }
+
+        /**
+         * Βοηθητική: δίνει μια σειρά κορυφών και κινήσεων που σχηματίζουν τον κύκλο.
+         * @param {Array<Object>} cycleMoves
+         * @returns {{orderedCells:number[], orderedMoves:number[]}}
+         */
+        function orderCycle(cycleMoves) {
+            const cellSet = new Set();
+            cycleMoves.forEach(m => {
+                cellSet.add(m.cells[0]);
+                cellSet.add(m.cells[1]);
+            });
+            const cycleCells = Array.from(cellSet);
+
+            const adj = {};
+            cycleCells.forEach(c => adj[c] = []);
+            cycleMoves.forEach(m => {
+                const [u, v] = m.cells;
+                adj[u].push({ neighbor: v, moveId: m.id });
+                adj[v].push({ neighbor: u, moveId: m.id });
+            });
+
+            const start = cycleCells[0];
+            let prev = null;
+            let curr = start;
+            const orderedCells = [start];
+            const orderedMoves = [];
+
+            while (true) {
+                const neighbors = adj[curr];
+                let edge = neighbors[0];
+                if (prev !== null && neighbors[0].neighbor === prev) {
+                    edge = neighbors[1];
+                }
+                const next = edge.neighbor;
+                orderedMoves.push(edge.moveId);
+                if (next === start) break;
+                orderedCells.push(next);
+                prev = curr;
+                curr = next;
+            }
+
+            return { orderedCells, orderedMoves };
         }
 
         /**
@@ -369,132 +405,148 @@
             moveStage = 3; 
             boardElement.classList.add('collapse-mode');
             
-            // Find the moves involved in the cycle
             const cycleMoves = superpositionMoves.filter(m => cycleMoveIds.includes(m.id));
-            
-            // The player who made the last move (collapsingPlayer) chooses
-            const playerMark = collapsingPlayer === 'X' ? 'Χ' : 'Ο';
-            
-            updateMessage(
-                `Παίκτης ${playerMark}: Επιλέξτε πού θα καταρρεύσει μια κίνηση του κύκλου.`, 
-                'text-red-700', 
-                'bg-red-200'
-            );
-
-            collapseOptionsElement.innerHTML = '';
-            
-            // Display options for all moves in the cycle
-            cycleMoves.forEach(move => {
-                const [cellA, cellB] = move.cells;
-                const movePlayerMark = move.player === 'X' ? 'Χ' : 'Ο';
-                
-                // Επιλογή κατάρρευσης στο Κελί Α
-                if (boardState[cellA].definite === null && boardState[cellA].superposition.includes(move.id)) {
-                    const btnA = document.createElement('button');
-                    btnA.classList.add('collapse-option');
-                    btnA.textContent = `${movePlayerMark}${move.id} → Κελί ${cellA + 1}`;
-                    btnA.onclick = () => resolveCollapse(move.id, cellA, cycleMoveIds);
-                    collapseOptionsElement.appendChild(btnA);
-                }
-
-                // Επιλογή κατάρρευσης στο Κελί Β
-                if (boardState[cellB].definite === null && boardState[cellB].superposition.includes(move.id)) {
-                    const btnB = document.createElement('button');
-                    btnB.classList.add('collapse-option');
-                    btnB.textContent = `${movePlayerMark}${move.id} → Κελί ${cellB + 1}`;
-                    btnB.onclick = () => resolveCollapse(move.id, cellB, cycleMoveIds);
-                    collapseOptionsElement.appendChild(btnB);
-                }
-            });
-            
-            // If there are no collapse options left (emergency brake)
-            if (collapseOptionsElement.children.length === 0) {
-                updateMessage("Σφάλμα: Δεν βρέθηκαν έγκυρες επιλογές κατάρρευσης. Επανεκκινήστε το παιχνίδι.", 'text-red-800', 'bg-red-100');
+            if (cycleMoves.length === 0) {
+                updateMessage("Σφάλμα: Κενός κύκλος.", 'text-red-800', 'bg-red-100');
                 gameActive = false;
                 return;
             }
 
-            // Disable clicks on the board until measurement is done
+            const { orderedCells, orderedMoves } = orderCycle(cycleMoves);
+            const k = orderedCells.length;
+
+            // Δύο επιτρεπτές καταρρεύσεις: Προσανατολισμός A και B
+            const assignmentA = {}; // edge i → cell i+1
+            const assignmentB = {}; // edge i → cell i
+            for (let i = 0; i < k; i++) {
+                const moveId = orderedMoves[i];
+                const cellA = orderedCells[i];
+                const cellB = orderedCells[(i + 1) % k];
+                assignmentA[cellB] = moveId;
+                assignmentB[cellA] = moveId;
+            }
+
+            // Βρίσκουμε την τελευταία κίνηση (μεγαλύτερο id) για την περιγραφή του κουμπιού
+            const lastId = Math.max(...cycleMoveIds);
+            const lastMove = cycleMoves.find(m => m.id === lastId) || cycleMoves[cycleMoves.length - 1];
+
+            const findCellForMove = (assignment, moveId) => {
+                for (const [cellStr, mid] of Object.entries(assignment)) {
+                    if (mid === moveId) return parseInt(cellStr, 10);
+                }
+                return null;
+            };
+
+            const cellA_for_last = findCellForMove(assignmentA, lastMove.id);
+            const cellB_for_last = findCellForMove(assignmentB, lastMove.id);
+
+            const movePlayerMark = lastMove.player === 'X' ? 'Χ' : 'Ο';
+
+            updateMessage(
+                `Παίκτης ${collapsingPlayer === 'X' ? 'Χ' : 'Ο'}: Επιλέξτε μία από τις δύο δυνατές καταρρεύσεις του κύκλου.`,
+                'text-red-700',
+                'bg-red-200'
+            );
+
+            collapseOptionsElement.innerHTML = '';
+
+            // Επιλογή 1
+            const btn1 = document.createElement('button');
+            btn1.classList.add('collapse-option');
+            btn1.textContent = `Επιλογή 1: ${movePlayerMark}${lastMove.id} → Κελί ${cellA_for_last + 1}`;
+            btn1.onclick = () => resolveCollapse(assignmentA, orderedCells, cycleMoveIds);
+            collapseOptionsElement.appendChild(btn1);
+
+            // Επιλογή 2
+            const btn2 = document.createElement('button');
+            btn2.classList.add('collapse-option');
+            btn2.textContent = `Επιλογή 2: ${movePlayerMark}${lastMove.id} → Κελί ${cellB_for_last + 1}`;
+            btn2.onclick = () => resolveCollapse(assignmentB, orderedCells, cycleMoveIds);
+            collapseOptionsElement.appendChild(btn2);
+
+            // Απενεργοποίηση κλικ στον πίνακα μέχρι να γίνει η μέτρηση
             boardElement.querySelectorAll('.cell').forEach(cell => cell.removeEventListener('click', handleCellClick));
         }
         
         /**
-         * Resolves the collapse based on the player's choice, applying deterministic propagation.
-         * @param {number} chosenMoveId - ID of the move chosen to collapse.
-         * @param {number} chosenCellIndex - The index of the cell where the move collapses.
+         * Resolves the collapse for the chosen global assignment.
+         * @param {Object} assignment - mapping: cellIndex -> moveId
+         * @param {Array<number>} cycleCells - cells belonging to the cycle
+         * @param {Array<number>} cycleMoveIds - move IDs in the cycle
          */
-        function resolveCollapse(chosenMoveId, chosenCellIndex) {
+        function resolveCollapse(assignment, cycleCells, cycleMoveIds) {
             collapseOptionsElement.innerHTML = '';
             boardElement.classList.remove('collapse-mode');
 
-            // 1. Κατάρρευση της επιλεγμένης κίνησης (Measurement)
-            const chosenMove = superpositionMoves.find(m => m.id === chosenMoveId);
-            const otherCellIndex = chosenMove.cells.find(i => i !== chosenCellIndex);
+            // 1. Remove all cycle moves from all superpositions
+            for (let i = 0; i < 9; i++) {
+                boardState[i].superposition = boardState[i].superposition.filter(
+                    id => !cycleMoveIds.includes(id)
+                );
+            }
 
-            // Θέτουμε το επιλεγμένο κελί ως οριστικό
-            boardState[chosenCellIndex].definite = chosenMove.player;
-            boardState[chosenCellIndex].superposition = []; 
-            
-            // Αφαιρούμε την κίνηση από το άλλο κελί (Quantum Effect)
-            boardState[otherCellIndex].superposition =
-                boardState[otherCellIndex].superposition.filter(id => id !== chosenMoveId);
+            // 2. Set definite marks for all cycle cells according to the chosen orientation
+            for (const cellIndex of cycleCells) {
+                const moveId = assignment[cellIndex];
+                const move = superpositionMoves.find(m => m.id === moveId);
+                if (move) {
+                    boardState[cellIndex].definite = move.player;
+                }
+            }
 
-            // 2. Επαναληπτική Διαδοχική Κατάρρευση (Deterministic Propagation)
-            let collapseOccurred = true;
+            // 3. Deterministic propagation for chains hanging off the cycle
+            let changed = true;
+            while (changed) {
+                changed = false;
 
-            while (collapseOccurred) {
-                collapseOccurred = false;
-                
-                // Επανάληψη σε όλα τα κελιά (κόμβους) του πίνακα
+                // Κανόνας 1: Οριστικά κελιά αφαιρούν τις κινήσεις τους από γειτονικά κελιά (εκτός κύκλου)
                 for (let i = 0; i < 9; i++) {
                     if (boardState[i].definite !== null) {
-                        // ΚΑΝΟΝΑΣ 1: Ένα κελί i μόλις έγινε Definite.
                         for (const move of superpositionMoves) {
+                            if (cycleMoveIds.includes(move.id)) continue; // παραλείπουμε τον κύκλο
                             if (move.cells.includes(i)) {
-                                const otherCell = move.cells.find(c => c !== i);
-                                
-                                const initialLength = boardState[otherCell].superposition.length;
-                                boardState[otherCell].superposition =
-                                    boardState[otherCell].superposition.filter(id => id !== move.id);
-                                
-                                if (boardState[otherCell].superposition.length < initialLength) {
-                                    collapseOccurred = true; 
+                                const other = (move.cells[0] === i) ? move.cells[1] : move.cells[0];
+                                const beforeLen = boardState[other].superposition.length;
+                                boardState[other].superposition =
+                                    boardState[other].superposition.filter(id => id !== move.id);
+                                if (boardState[other].superposition.length !== beforeLen) {
+                                    changed = true;
                                 }
                             }
                         }
+                    }
+                }
 
-                    } else if (boardState[i].definite === null) {
-                        // ΚΑΝΟΝΑΣ 2: Κελί i έχει μία μόνο κβαντική επιλογή.
-                        if (boardState[i].superposition.length === 1) {
-                            const winningMoveId = boardState[i].superposition[0];
-                            const winningMove = superpositionMoves.find(m => m.id === winningMoveId);
-
-                            if (winningMove) {
-                                boardState[i].definite = winningMove.player;
-                                boardState[i].superposition = []; 
-                                collapseOccurred = true; // Συνεχίζουμε τον βρόχο για να εφαρμοστεί ο Κανόνας 1
-                            }
+                // Κανόνας 2: Όποιο κελί έχει μία μόνο κβαντική επιλογή γίνεται οριστικό
+                for (let i = 0; i < 9; i++) {
+                    if (boardState[i].definite === null &&
+                        boardState[i].superposition.length === 1) {
+                        const winningMoveId = boardState[i].superposition[0];
+                        const winningMove = superpositionMoves.find(m => m.id === winningMoveId);
+                        if (winningMove) {
+                            boardState[i].definite = winningMove.player;
+                            boardState[i].superposition = [];
+                            changed = true;
                         }
                     }
                 }
             }
 
-            // 3. Final Cleanup (Safe redundancy)
+            // 4. Final cleanup
             for (let i = 0; i < 9; i++) {
                 if (boardState[i].definite !== null) {
                     boardState[i].superposition = [];
                 }
             }
 
-            // 4. Check for win
+            // 5. Check for win
             renderBoard();
             if (checkForWin()) return;
 
-            // 5. Continue the game
+            // 6. Continue the game: σειρά στον άλλο παίκτη
             moveStage = 1;
             firstCellIndex = null;
 
-            // Τώρα δίνουμε τη σειρά στον ΑΛΛΟ παίκτη από αυτόν που διάλεξε την κατάρρευση
             if (collapsingPlayer === 'X') {
                 currentPlayer = 'O';
             } else if (collapsingPlayer === 'O') {
@@ -558,12 +610,11 @@
                 const cycle = findCycle(newMove);
                 
                 if (cycle && cycle.length > 0) {
-                    // Ο παίκτης που έκλεισε τον κύκλο επιλέγει την κατάρρευση
-                    collapsingPlayer = currentPlayer;
+                    // Ο παίκτης που έκλεισε τον κύκλο έκανε την τελευταία κίνηση,
+                    // άρα ο ΑΛΛΟΣ παίκτης επιλέγει την κατάρρευση (κανόνας QT3)
+                    collapsingPlayer = (currentPlayer === 'X') ? 'O' : 'X';
 
-                    // Αύξησε ΠΑΝΤΑ το moveCounter για να μην επαναχρησιμοποιούνται IDs
                     moveCounter++;
-
                     startCollapsePhase(cycle);
                 } else {
                     // No collapse. Continue game.
@@ -611,3 +662,4 @@
     </script>
 </body>
 </html>
+
